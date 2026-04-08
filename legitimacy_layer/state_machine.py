@@ -130,7 +130,8 @@ class GovernanceStateMachine:
         if escalation_occurred:
             self._consecutive_escalations += 1
         else:
-            # Non-escalation resets counter (autonomous execution succeeded)
+            # Non-escalation decays the counter by one (not a full reset);
+            # sustained autonomous execution gradually restores autonomy.
             self._consecutive_escalations = max(0, self._consecutive_escalations - 1)
 
         # Progressive autonomy reduction
@@ -151,8 +152,13 @@ class GovernanceStateMachine:
 
     def operator_reset(self) -> None:
         """
-        Explicit operator action to recover from any non-NORMAL state.
-        Required for SAFE_HALT exit; also clears escalation counters.
+        Explicit operator action to exit SAFE_HALT and clear escalation counters.
+
+        When called in SAFE_HALT: transitions the system back to NORMAL_AUTONOMY.
+        When called in any other mode: clears the consecutive escalation counter
+        only — does not downgrade REDUCED_AUTONOMY or HUMAN_OVERSIGHT_REQUIRED
+        back to NORMAL_AUTONOMY. Recovery from those modes requires escalation
+        conditions to naturally clear through successive non-escalating decisions.
         """
         self.update(operator_reset=True)
 
