@@ -24,7 +24,7 @@ decision to one of four directives.
 The framework operates on four inputs per decision:
 
 | Signal | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `uncertainty_score` | float ∈ [0, 1] | Model-reported epistemic uncertainty |
 | `impact_class` | {LOW, HIGH, CRITICAL} | Categorical consequence severity |
 | `reversibility_flag` | bool | Whether the action can be undone |
@@ -33,7 +33,7 @@ The framework operates on four inputs per decision:
 It produces a single **directive**:
 
 | Directive | Meaning |
-|---|---|
+| --- | --- |
 | `EXECUTE` | Proceed autonomously |
 | `EXECUTE_ASYNC` | Proceed, but log for deferred human review |
 | `ESCALATE` | Pause and transfer control to a human operator |
@@ -45,7 +45,7 @@ It produces a single **directive**:
 
 ### Algorithm 1 — `route_decision`
 
-Implemented in [`legitimacy_layer/controller.py`](legitimacy_layer/controller.py).
+Implemented in [`legitimacy_layer/controller.py`](https://github.com/MrHamzaAb/legitimacy-layer-prototype/blob/main/legitimacy_layer/controller.py).
 
 The routing function applies eight rules in strict priority order:
 
@@ -72,30 +72,39 @@ Reproduced by running `python main.py`. All 1,000 decisions are evaluated
 under fixed `NORMAL_AUTONOMY` mode, matching Section V-G of the paper exactly.
 
 | Directive | Count | Percentage |
-|---|---|---|
+| --- | --- | --- |
 | EXECUTE | 53 | 5.3% |
 | EXECUTE_ASYNC | 118 | 11.8% |
 | ESCALATE | 829 | 82.9% |
 | HALT | 0 | 0.0% |
 
-**On the escalation rate.** The 82.9% ESCALATE rate is a direct consequence
-of the conservative signal parameters used in the simulation: CRITICAL impact
-at 20% of decisions (always escalates via Rule 4) and contestation probability
-at 20% (always escalates via Rule 3). Together these two rules alone account
-for the majority of escalations before uncertainty-based rules are even reached.
+**On the escalation rate.** The 82.9% ESCALATE rate under the paper's baseline
+parameters decomposes analytically across four routing sources:
 
-This reflects a deliberate Type II error-averse design posture: the architecture
-is tuned to minimise missed escalations (false negatives) at the cost of
-producing unnecessary escalations (false positives). In safety-critical systems,
-the asymmetry between these error types justifies conservative defaults — an
-unnecessary escalation imposes operator workload; a missed escalation may
-produce irreversible harm. As noted in Section V-D of the paper, operational
-deployments would configure contestation frequency and impact class distributions
-to reflect domain-specific decision volumes and risk profiles. The routing
-thresholds (`low_threshold`, `high_threshold`) are exposed as parameters in
-`SimulationConfig` precisely to support this domain-specific calibration.
+| Source | Contribution |
+| --- | --- |
+| Rule 3 — contestation signal | 20.0 pp |
+| Rule 4 — CRITICAL impact | 16.0 pp |
+| Rule 5 — HIGH impact + uncertainty > high threshold | 9.6 pp |
+| Rule 8 — default fallthrough (unmatched signal combinations) | 36.4 pp |
+| **Total (analytical)** | **82.0%** |
+| Simulation (seed=42, `main.py`) | 82.9% |
 
-Escalation rates are therefore not fixed properties of the architecture, but outcomes of parameter calibration — allowing the system to balance safety (Type II error avoidance) against operational workload (Type I error cost) according to domain-specific governance requirements.
+The default fallthrough (Rule 8) is the largest single contributor. It
+captures two classes of unmatched signal combinations: HIGH-impact
+decisions with uncertainty at or below the high threshold (14.4 pp),
+and LOW-impact decisions that fail either the reversibility precondition
+for EXECUTE_ASYNC or the low-uncertainty precondition for EXECUTE (22.0 pp).
+This reflects the architecture's conservative failure posture specified in
+Section IV-C of the paper: signal combinations not explicitly authorised
+for autonomous or asynchronous execution are routed to human oversight
+rather than resolved by a permissive default.
+
+The escalation rate is therefore a controllable function of input regime
+and rule-set design rather than a fixed property of the architecture.
+Section V-G and Table VI of the paper characterise how the rate varies
+across a 2×2 grid of uncertainty distributions and contestation
+probabilities; the validation scripts below reproduce these results.
 
 **HALT = 0** is correct and expected. The HALT directive is only issued when
 `governance_mode == SAFE_HALT`, which is a state machine condition — not a
@@ -105,39 +114,78 @@ specification in Section IV-E.
 
 ---
 
+## Validation Scripts
+
+Three validation scripts at the repo root support the analytical and
+verification claims made in the ICHCAI 2026 revision of the paper.
+
+| Script | Purpose |
+| --- | --- |
+| `analytical_prediction.py` | Closed-form derivation of Algorithm 1's routing distribution across the 2×2 grid of configurations in Table VI. Does not run any simulation. |
+| `grid_verification.py` | Runs the simulator at 20 seeds per cell across all four grid cells and asserts agreement with the analytical prediction within ±1.5 percentage points. |
+| `seed_stability.py` | Reports mean, stdev, min, max, and range of the ESCALATE rate across 20 seeds per cell, establishing seed stability. |
+
+Run all three:
+
+```
+python analytical_prediction.py
+python grid_verification.py
+python seed_stability.py
+```
+
+Expected result: `grid_verification.py` prints `PASS` for all four cells.
+The worst-case observed difference between simulation and analytical
+prediction is under 0.5 percentage points; the 1.5 pp tolerance is a
+conservative bound.
+
+---
+
 ## Project Structure
 
 ```
 legitimacy_layer/
-├── __init__.py          # Public API surface
-├── controller.py        # Algorithm 1 — route_decision
-├── state_machine.py     # Governance mode state machine (Fig. 2)
-├── simulation.py        # 1 000-decision reproducible simulation (Table IV)
-└── audit.py             # Append-only audit log (JSONL + CSV)
-main.py                  # Simulation entry point
-requirements.txt         # No third-party deps; pytest for tests
+├── __init__.py             # Public API surface
+├── controller.py           # Algorithm 1 — route_decision
+├── state_machine.py        # Governance mode state machine (Fig. 2)
+├── simulation.py           # 1,000-decision reproducible simulation (Table IV)
+└── audit.py                # Append-only audit log (JSONL + CSV)
+main.py                     # Simulation entry point (Table IV)
+analytical_prediction.py    # Closed-form Table VI predictions
+grid_verification.py        # Simulator vs analytical across Table VI grid
+seed_stability.py           # Per-cell seed-stability analysis
+requirements.txt            # scipy for validation scripts; pytest for unit tests
 README.md
 ```
 
 | Paper element | Implementation |
-|---|---|
+| --- | --- |
 | Algorithm 1 | `legitimacy_layer/controller.py` → `route_decision()` |
 | Fig. 2 — State machine | `legitimacy_layer/state_machine.py` → `GovernanceStateMachine` |
 | Table IV — Simulation | `legitimacy_layer/simulation.py` → `run_simulation()` |
+| Table VI — Grid predictions | `analytical_prediction.py` |
+| Table VI — Grid verification | `grid_verification.py` |
 | Audit trail | `legitimacy_layer/audit.py` → `AuditLog` |
 
 ---
 
 ## How to Run
 
-**Requirements:** Python 3.10 or later. No third-party packages required.
+**Requirements:** Python 3.10 or later. Install dependencies with:
 
-```bash
-# Clone / download the repository, then:
+```
+pip install -r requirements.txt
+```
+
+The core prototype (`main.py`, `legitimacy_layer/`) uses only the Python
+standard library. `scipy` is required only for the validation scripts.
+
+### Reproduce Table IV
+
+```
 python main.py
 ```
 
-This runs the full 1 000-decision simulation with `random_seed=42` and
+This runs the full 1,000-decision simulation with `random_seed=42` and
 prints the directive distribution table. It also writes an audit log to
 `simulation_audit.jsonl`.
 
@@ -191,6 +239,22 @@ log.append(
 log.export_csv("my_audit.csv")
 ```
 
+### Select an alternative uncertainty distribution
+
+The `uncertainty_dist` config parameter added for the ICHCAI 2026 revision
+selects between Uniform[0,1] (paper default, preserves Table IV) and
+Beta(2,5) (operational regime used in Table VI):
+
+```python
+from legitimacy_layer import SimulationConfig, UncertaintyDist, run_simulation
+
+cfg = SimulationConfig(
+    p_contestation=0.02,
+    uncertainty_dist=UncertaintyDist.BETA_2_5,
+)
+result = run_simulation(cfg)
+```
+
 ---
 
 ## Example Output
@@ -218,10 +282,10 @@ log.export_csv("my_audit.csv")
   ──────────────────────────────────────────────────────
   TOTAL                    1000      100.00%
 
-  Note: elevated ESCALATE rate reflects conservative signal
-  parameters (p_critical=0.2, p_contestation=0.2). In
-  operational deployments these are domain-calibrated.
-  See paper Section V-D and V-G for full discussion.
+  Note: the 82.9% escalation rate decomposes as 20.0 pp contestation +
+  16.0 pp CRITICAL + 9.6 pp HIGH+uncertainty + 36.4 pp default
+  fallthrough. See paper Section V-G and Table VI for the analytical
+  decomposition and operational-regime comparisons.
 
   Audit log written to: simulation_audit.jsonl
 
@@ -243,14 +307,19 @@ Exact values are deterministic for `seed=42`. Re-running always produces identic
 
 ## Design Decisions
 
-- **Standard library only.** No external dependencies beyond `pytest`.
-- **Deterministic.** The same seed always produces the same output.
-- **Append-only audit.** Each record is written immediately; the log
+* **Minimal dependencies.** Core prototype uses the Python standard library
+  only; `scipy` required only for validation scripts.
+* **Deterministic.** The same seed always produces the same output.
+* **Append-only audit.** Each record is written immediately; the log
   cannot be modified retroactively.
-- **No automatic recovery from SAFE_HALT.** Operator reset is required,
+* **No automatic recovery from SAFE_HALT.** Operator reset is required,
   enforcing human-in-the-loop for the most severe failure mode.
-- **Strict priority ordering.** Rules are evaluated top-to-bottom with
+* **Strict priority ordering.** Rules are evaluated top-to-bottom with
   no ambiguity; the first matching condition wins.
+* **Conservative failure posture.** The rule set is deliberately
+  non-exhaustive over the joint signal space; unmatched combinations
+  route to the default (ESCALATE), failing toward human oversight
+  rather than autonomous action.
 
 ---
 
@@ -258,7 +327,8 @@ Exact values are deterministic for `seed=42`. Re-running always produces identic
 
 If you use this prototype in academic work, please cite the accompanying
 IEEE paper. This repository provides a fully reproducible reference
-implementation of Algorithm 1 and the simulation described in Table IV.
+implementation of Algorithm 1, the simulation described in Table IV,
+and the analytical and simulation verification underlying Table VI.
 
 ---
 
