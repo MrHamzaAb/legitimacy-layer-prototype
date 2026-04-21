@@ -8,10 +8,16 @@ matching the paper's assumption exactly and reproducing Table IV.
 The governance mode state machine is intentionally not active during this
 simulation. Its behaviour is demonstrated separately via the deterministic
 mode transition sequence in Table V of the paper.
+
+The `uncertainty_dist` config parameter (added for the ICHCAI 2026 revision)
+selects between UNIFORM[0,1] (paper default, preserves Table IV exactly) and
+BETA(2,5) (operational regime used in Table VI). The UNIFORM default ensures
+that existing uses of SimulationConfig() reproduce Table IV unchanged.
 """
 
 import random
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, List
 
 from .audit import AuditLog
@@ -21,6 +27,16 @@ from .controller import (
     ImpactClass,
     route_decision,
 )
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty distribution selector
+# ---------------------------------------------------------------------------
+
+class UncertaintyDist(str, Enum):
+    """Selector for the uncertainty distribution sampled per decision."""
+    UNIFORM = "UNIFORM"      # U ~ Uniform[0, 1]  (paper Section V-G default)
+    BETA_2_5 = "BETA_2_5"    # U ~ Beta(2, 5)     (operational regime, Table VI)
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +62,10 @@ class SimulationConfig:
     # domain-specific calibration is a deployment concern (Section III-C).
     low_threshold: float = 0.30
     high_threshold: float = 0.60
+
+    # Uncertainty distribution selector (added for Table VI reproducibility).
+    # Defaults to UNIFORM to preserve Section V-G and Table IV exactly.
+    uncertainty_dist: UncertaintyDist = UncertaintyDist.UNIFORM
 
     # Audit output path
     audit_path: str = "simulation_audit.jsonl"
@@ -89,6 +109,23 @@ class SimulationResult:
 
 
 # ---------------------------------------------------------------------------
+# Uncertainty sampling helper
+# ---------------------------------------------------------------------------
+
+def _sample_uncertainty(rng: random.Random, dist: UncertaintyDist) -> float:
+    """Sample a single uncertainty score from the selected distribution."""
+    if dist == UncertaintyDist.UNIFORM:
+        return rng.uniform(0.0, 1.0)
+    elif dist == UncertaintyDist.BETA_2_5:
+        # Python's random.betavariate(alpha, beta) samples from Beta(alpha, beta)
+        # in [0, 1]. Parameter convention matches scipy.stats.beta(a, b) and
+        # NumPy's np.random.beta(a, b).
+        return rng.betavariate(2.0, 5.0)
+    else:
+        raise ValueError(f"Unknown uncertainty distribution: {dist}")
+
+
+# ---------------------------------------------------------------------------
 # Main simulation entry point
 # ---------------------------------------------------------------------------
 
@@ -128,7 +165,7 @@ def run_simulation(config: SimulationConfig = SimulationConfig()) -> SimulationR
 
     for decision_id in range(1, config.n_decisions + 1):
         # --- Sample inputs ---
-        uncertainty = rng.uniform(0.0, 1.0)
+        uncertainty = _sample_uncertainty(rng, config.uncertainty_dist)
         impact = rng.choice(impact_population)
         reversible = rng.random() < 0.5
         contested = rng.random() < config.p_contestation
