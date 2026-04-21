@@ -1,9 +1,16 @@
 # Legitimacy Layer — Python dependencies
 #
-# This prototype uses only the Python standard library.
-# No third-party packages are required.
+# The core prototype (main.py, legitimacy_layer/) uses only the Python
+# standard library and requires no third-party packages.
+#
+# The validation scripts added for the ICHCAI 2026 revision
+# (analytical_prediction.py, grid_verification.py, seed_stability.py)
+# require scipy for the Beta(2,5) CDF used in Table VI analytical predictions.
 #
 # Tested with Python 3.10+
-#
+
+# Required for validation scripts (analytical_prediction.py, grid_verification.py)
+scipy>=1.10
+
 # Optional — only needed to run the unit tests
 pytest>=7.0
